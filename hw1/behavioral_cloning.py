@@ -10,8 +10,9 @@ def get_dataset(expert_data_file=None,envname=None,render=False,expert_policy_fi
     if expert_data_file:
         with open(expert_data_file, 'rb') as f:
             trace = pickle.load(f)
+            returns = trace['returns']
     else:
-        returns, trace = run_expert(envname,render,expert_policy_file,max_timesteps,num_rollouts,store=False)
+        returns, trace = run_expert(envname,render,expert_policy_file,max_timesteps,num_rollouts,store=store)
     dataset = tf.data.Dataset.from_tensor_slices((trace['observations'], trace['actions']))
     dataset = dataset.shuffle(buffer_size=10000)
     return dataset, returns
@@ -34,19 +35,21 @@ class BehavioralCloningNet():
             #self.relu = tf.nn.relu(self.cnn)
             #self.pool = tf.layers.max_pooling1d(self.relu,pool_size=4,strides=1,padding='SAME')
             #self.onechanelreduc = tf.squeeze(self.pool,axis=2)
+            self.dropout = tf.keras.layers.Dropout(rate=0.5)
             self.hidden_layer_1 = tf.contrib.layers.fully_connected(
-                inputs = self.state,
+                inputs = self.dropout(self.state),
                 #inputs = self.onechanelreduc,
                 num_outputs=n_hidden,
                 #weights_initializer=tf.contrib.layers.xavier_initializer()
             ) 
-            self.hidden_layer_2 = tf.contrib.layers.fully_connected(
-                inputs = self.hidden_layer_1,
-                num_outputs=n_hidden,
-                weights_initializer=tf.contrib.layers.xavier_initializer()
-            ) 
+            #self.hidden_layer_2 = tf.contrib.layers.fully_connected(
+            #    inputs = self.dropout(self.hidden_layer_1),
+            #    num_outputs=n_hidden,
+            #    weights_initializer=tf.contrib.layers.xavier_initializer()
+            #) 
+            
             self.output_layer = tf.contrib.layers.fully_connected(
-                inputs = self.hidden_layer_1,
+                inputs = self.dropout(self.hidden_layer_1),
                 num_outputs=action_dim[0], #predict all actions
                 activation_fn=None,
                 #weights_initializer=tf.zeros_initializer)
@@ -55,7 +58,8 @@ class BehavioralCloningNet():
 
             
             self.loss = tf.losses.mean_squared_error(predictions=self.output_layer,labels=self.target)
-            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate,decay=0.99)
+            #self.optimizer = tf.train.RMSPropOptimizer(learning_rate=learning_rate,decay=0.99)
+            self.optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
             self.train_op = self.optimizer.minimize(
                 self.loss, global_step=tf.train.get_global_step())
             tf.get_default_session().run(tf.global_variables_initializer())
@@ -67,6 +71,7 @@ class BehavioralCloningNet():
     def update(self, state, target, sess=None):
         sess = sess or tf.get_default_session()
         #TODO: remove numpy stuff
+        #state = tf.ensure_shape(state,self.state.shape.as_list()).eval()
         feed_dict = { self.state: state, self.target: target}
         _, loss = sess.run([self.train_op, self.loss], feed_dict)
         return loss
@@ -79,12 +84,6 @@ class BehavioralCloningNet():
                 state_val, target_val = sess.run(next_element)
                 loss_val = self.update(state_val,np.squeeze(target_val))
                 losses.append(loss_val)
-                #if i %100 == 0:
-                    #clear_output(wait=True)
-                    #plt.plot(losses)
-                    #plt.show()
-                    
-                    #display(fig)
             except tf.errors.OutOfRangeError:
                 break
         return losses
@@ -124,7 +123,7 @@ class Evaluate():
                 steps += 1
                 if self.render:
                     self.env.render()
-                if steps % 100 == 0: print("%i/%i"%(steps, self.max_steps))
+                #if steps % 100 == 0: print("%i/%i"%(steps, self.max_steps))
                 if steps >= self.max_steps:
                     self.env.close()
                     break
