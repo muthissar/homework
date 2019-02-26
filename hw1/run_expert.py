@@ -53,16 +53,17 @@ def run_expert(envname,render,expert_policy_file,max_timesteps,num_rollouts,stor
                     break
             returns.append(totalr)
 
-            print('returns', returns)
-            print('mean return', np.mean(returns))
-            print('std of return', np.std(returns))
+        print('returns', returns)
+        print('mean return', np.mean(returns))
+        print('std of return', np.std(returns))
 
-            expert_data = {'observations': np.array(observations),
-                        'actions': np.array(actions)}
+        expert_data = {'observations': np.array(observations),
+                    'actions': np.array(actions),
+                    'returns': np.array(returns)}
 
-            if store:
-                with open(os.path.join('expert_data', envname + '.pkl'), 'wb') as f:
-                    pickle.dump(expert_data, f, pickle.HIGHEST_PROTOCOL)
+        if store:
+            with open(os.path.join('expert_data/{}-{}.pkl'.format(envname,num_rollouts)), 'wb') as f:
+                pickle.dump(expert_data, f, pickle.HIGHEST_PROTOCOL)
 
         return returns, expert_data
 def main():
