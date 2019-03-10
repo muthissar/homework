@@ -11,7 +11,7 @@ import os
 import time
 import inspect
 from multiprocessing import Process
-
+from functools import reduce
 #============================================================================================#
 # Utilities
 #============================================================================================#
@@ -38,7 +38,21 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
         Hint: use tf.layers.dense    
     """
     # YOUR CODE HERE
-    raise NotImplementedError
+    output_placeholder = None
+    if n_layers < 1:
+        raise 'n_layers should be > 0'
+    else:
+        prev_layer = input_placeholder
+        for i in range(n_layers):
+            if i == n_layers - 1:
+                activation = output_activation
+                size = output_size
+            output_placeholder = prev_layer = tf.contrib.layers.fully_connected(
+                inputs = prev_layer,
+                num_outputs = size,
+                activation_fn = activation,
+                scope = "{}/{}".format(scope,i)
+            )
     return output_placeholder
 
 def pathlength(path):
@@ -95,14 +109,14 @@ class Agent(object):
                 sy_ac_na: placeholder for actions
                 sy_adv_n: placeholder for advantages
         """
-        raise NotImplementedError
         sy_ob_no = tf.placeholder(shape=[None, self.ob_dim], name="ob", dtype=tf.float32)
         if self.discrete:
             sy_ac_na = tf.placeholder(shape=[None], name="ac", dtype=tf.int32) 
         else:
             sy_ac_na = tf.placeholder(shape=[None, self.ac_dim], name="ac", dtype=tf.float32) 
         # YOUR CODE HERE
-        sy_adv_n = None
+        #TODO: for now single value
+        sy_adv_n = tf.placeholder(shape=[None], name="adv", dtype=tf.float32)
         return sy_ob_no, sy_ac_na, sy_adv_n
 
 
@@ -134,15 +148,29 @@ class Agent(object):
                 Pass in self.n_layers for the 'n_layers' argument, and
                 pass in self.size for the 'size' argument.
         """
-        raise NotImplementedError
+        #raise NotImplementedError
         if self.discrete:
             # YOUR_CODE_HERE
-            sy_logits_na = None
+            network = build_mlp(input_placeholder = sy_ob_no,
+                output_size =  self.ac_dim,
+                scope="nn_policy_discrete",
+                n_layers =  self.n_layers,
+                size=self.size
+            )
+            sy_logits_na = network
             return sy_logits_na
         else:
             # YOUR_CODE_HERE
-            sy_mean = None
-            sy_logstd = None
+            # For now implimented as two networks, we could maybe feed the means to the neural n
+            network = build_mlp(input_placeholder = sy_ob_no,
+                output_size =  self.ac_dim,
+                scope="nn_policy_continous_mean",
+                n_layers =  self.n_layers,
+                size=self.size
+            )
+            sy_mean = network
+            sy_logstd = tf.get_variable("policy_continous_logstd", shape=[self.ac_dim],trainable=True)
+
             return (sy_mean, sy_logstd)
 
     #========================================================================================#
@@ -172,15 +200,21 @@ class Agent(object):
         
                  This reduces the problem to just sampling z. (Hint: use tf.random_normal!)
         """
-        raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
-            sy_sampled_ac = None
+            action_probs = tf.nn.softmax(sy_logits_na)
+            #TODO: rewrite using 
+            # action = np.random.choice(range(self.ac), p=action_probs)
+            sy_sampled_ac = tf.map_fn(lambda probs: tf.cast(tf.distributions.Categorical(probs=probs).sample(),tf.float32),action_probs,parallel_iterations=False)
+            print(sy_sampled_ac)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
-            sy_sampled_ac = None
+            stds = tf.exp(sy_logstd)
+            zs = tf.random.normal([None,self.ac_dim])
+            scaled = tf.map_fn(lambda action_sig:  tf.multiply(action_sig,stds), zs)
+            sy_sampled_ac = sy_mean + scaled
         return sy_sampled_ac
 
     #========================================================================================#
@@ -209,15 +243,28 @@ class Agent(object):
                 For the discrete case, use the log probability under a categorical distribution.
                 For the continuous case, use the log probability under a multivariate gaussian.
         """
-        raise NotImplementedError
+        #raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
-            # YOUR_CODE_HERE
-            sy_logprob_n = None
+            #probs  = tf.nn.softmax(sy_logits_na)
+            #Add action to last column such that it can be used in combination with map
+            #concated = tf.concat([probs, tf.reshape(tf.cast(sy_ac_na, tf.float32),[-1,1])],axis=1)
+            #sy_logprob_n =  tf.map_fn(lambda t: tf.gather(t,tf.cast(tf.gather(t,[int(self.ac_dim)]),dtype=tf.int32)),concated)
+            negative_likelihoods= tf.nn.softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
+            weighted_negative_likelihoods = tf.multiply(negative_likelihoods, q_values)
+            loss = tf.reduce_mean(weighted_negative_likelihoods)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
-            sy_logprob_n = None
+            #Add action to last column such that it can be used in combination with map
+            concated = tf.concat([sy_mean,sy_ac_na], axis=1)
+            sy_logprob_n = tf.map_fn(lambda t: tf.distributions.Normal(
+                loc=tf.gather(t,range(self.ac_dim)),
+                scale=tf.exp(sy_logstd)
+                ).log_prob(
+                    tf.gather(t,range(self.ac_dim,self.ac_dim*2))),
+            concated)
+            
         return sy_logprob_n
 
     def build_computation_graph(self):
@@ -258,8 +305,9 @@ class Agent(object):
         #                           ----------PROBLEM 2----------
         # Loss Function and Training Operation
         #========================================================================================#
-        loss = None # YOUR CODE HERE
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(loss)
+        #loss = None # YOUR CODE HERE
+        self.loss = -tf.reduce_mean(self.sy_logprob_n * self.sy_adv_n)
+        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
 
         #========================================================================================#
         #                           ----------PROBLEM 6----------
@@ -306,8 +354,7 @@ class Agent(object):
             #====================================================================================#
             #                           ----------PROBLEM 3----------
             #====================================================================================#
-            raise NotImplementedError
-            ac = None # YOUR CODE HERE
+            ac = self.sess.run(tf.cast(self.sy_sampled_ac, tf.int32),feed_dict={self.sy_ob_no: ob.reshape(1,-1)}) # YOUR CODE HERE
             ac = ac[0]
             acs.append(ac)
             ob, rew, done, _ = env.step(ac)
@@ -390,10 +437,24 @@ class Agent(object):
             like the 'ob_no' and 'ac_na' above. 
         """
         # YOUR_CODE_HERE
+        q_n = []
         if self.reward_to_go:
-            raise NotImplementedError
+            for advantages in re_n:
+                rewards_to_go = []
+                sum = 0
+                for i in range(len(advantages)-1,0,-1):
+                    advantage = advantages[i]
+                    sum += advantage + self.gamma * sum
+                    rewards_to_go.append(sum)
+                rewards_to_go.reverse()
+                q_n += rewards_to_go
         else:
-            raise NotImplementedError
+            for advantages in re_n:
+                sum = 0
+                for i in range(len(advantages)-1,0,-1):
+                    advantage = advantages[i]
+                    sum += advantage + self.gamma * sum
+                q_n += [sum] * len(advantages)
         return q_n
 
     def compute_advantage(self, ob_no, q_n):
@@ -512,7 +573,12 @@ class Agent(object):
         # and after an update, and then log them below. 
 
         # YOUR_CODE_HERE
-        raise NotImplementedError
+        self.sess.run([self.loss, self.update_op, self.loss], {
+            self.sy_ob_no: ob_no,
+            self.sy_ac_na: ac_na,
+            self.sy_adv_n: adv_n
+        })
+        #raise NotImplementedError
 
 
 def train_PG(
@@ -685,15 +751,16 @@ def main():
                 )
         # # Awkward hacky process runs, because Tensorflow does not like
         # # repeatedly calling train_PG in the same thread.
-        p = Process(target=train_func, args=tuple())
-        p.start()
-        processes.append(p)
+        train_func()
+        #p = Process(target=train_func, args=tuple())
+        #p.start()
+        #processes.append(p)
         # if you comment in the line below, then the loop will block 
         # until this process finishes
         # p.join()
 
-    for p in processes:
-        p.join()
+    #for p in processes:
+        #p.join()
 
 if __name__ == "__main__":
     main()
