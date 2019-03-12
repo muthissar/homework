@@ -12,6 +12,8 @@ import time
 import inspect
 from multiprocessing import Process
 from functools import reduce
+import ray
+ray.init()
 #============================================================================================#
 # Utilities
 #============================================================================================#
@@ -51,7 +53,7 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
                 inputs = prev_layer,
                 num_outputs = size,
                 activation_fn = activation,
-                scope = "{}/{}".format(scope,i)
+                #scope = "{}/{}".format(scope,i)
             )
     return output_placeholder
 
@@ -135,7 +137,7 @@ class Agent(object):
 
                 if discrete, the parameters are the logits of a categorical distribution
                     over the actions
-                    sy_logits_na: (batch_size, self.ac_dim)
+n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
 
                 if continuous, the parameters are a tuple (mean, log_std) of a Gaussian
                     distribution over actions. log_std should just be a trainable
@@ -204,10 +206,10 @@ class Agent(object):
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
             action_probs = tf.nn.softmax(sy_logits_na)
+            self.action_probs = action_probs
             #TODO: rewrite using 
             # action = np.random.choice(range(self.ac), p=action_probs)
             sy_sampled_ac = tf.map_fn(lambda probs: tf.cast(tf.distributions.Categorical(probs=probs).sample(),tf.float32),action_probs,parallel_iterations=False)
-            print(sy_sampled_ac)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
@@ -250,9 +252,8 @@ class Agent(object):
             #Add action to last column such that it can be used in combination with map
             #concated = tf.concat([probs, tf.reshape(tf.cast(sy_ac_na, tf.float32),[-1,1])],axis=1)
             #sy_logprob_n =  tf.map_fn(lambda t: tf.gather(t,tf.cast(tf.gather(t,[int(self.ac_dim)]),dtype=tf.int32)),concated)
-            negative_likelihoods= tf.nn.softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
-            weighted_negative_likelihoods = tf.multiply(negative_likelihoods, q_values)
-            loss = tf.reduce_mean(weighted_negative_likelihoods)
+            #sy_logprob_n = - tf.nn.softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
+            sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
@@ -306,8 +307,9 @@ class Agent(object):
         # Loss Function and Training Operation
         #========================================================================================#
         #loss = None # YOUR CODE HERE
-        self.loss = -tf.reduce_mean(self.sy_logprob_n * self.sy_adv_n)
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #COMES AS NEGATIVE
+        self.loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
+        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, global_step=tf.train.get_global_step())
 
         #========================================================================================#
         #                           ----------PROBLEM 6----------
@@ -335,14 +337,38 @@ class Agent(object):
         paths = []
         while True:
             animate_this_episode=(len(paths)==0 and (itr % 10 == 0) and self.animate)
-            path = self.sample_trajectory(env, animate_this_episode)
+            path = self.sample_trajectory(env, animate_this_episode,self.max_path_length)
             paths.append(path)
             timesteps_this_batch += pathlength(path)
+            #newpaths = self.sample_trajectories_parallel(env, n_parallel=10)
+            #for path in newpaths:
+            #    paths.append(path)
+            #    timesteps_this_batch += pathlength(path)
             if timesteps_this_batch > self.min_timesteps_per_batch:
                 break
         return paths, timesteps_this_batch
 
-    def sample_trajectory(self, env, animate_this_episode):
+
+    
+    @ray.remote
+    class Simulator(object):
+        def __init__(self,env_str,max_path_length):
+            self.env = gym.make(env_str)
+            #self.agent = agent
+            self.max_path_length = max_path_length
+
+        def sample(self,ray_agent_id):
+            self.env.reset()
+            agent = ray.get(ray_agent_id)
+            return agent.sample_trajectory(self.env,False,self.max_path_length)
+
+
+    def sample_trajectories_parallel(self, env, n_parallel=1):
+        ray_agent_id = ray.put(self)
+        simulators = [self.Simulator.remote(env.spec.id, self.max_path_length/n_parallel)]*n_parallel
+        return [simulator.sample.remote(ray_agent_id) for simulator in simulators]
+
+    def sample_trajectory(self, env, animate_this_episode,max_path_length):
         ob = env.reset()
         obs, acs, rewards = [], [], []
         steps = 0
@@ -360,7 +386,7 @@ class Agent(object):
             ob, rew, done, _ = env.step(ac)
             rewards.append(rew)
             steps += 1
-            if done or steps > self.max_path_length:
+            if done or steps > max_path_length:
                 break
         path = {"observation" : np.array(obs, dtype=np.float32), 
                 "reward" : np.array(rewards, dtype=np.float32), 
@@ -442,18 +468,19 @@ class Agent(object):
             for advantages in re_n:
                 rewards_to_go = []
                 sum = 0
-                for i in range(len(advantages)-1,0,-1):
+                for i in range(len(advantages)-1,-1,-1):
                     advantage = advantages[i]
-                    sum += advantage + self.gamma * sum
+                    sum = advantage + self.gamma * sum
                     rewards_to_go.append(sum)
                 rewards_to_go.reverse()
+                #q_n.append(rewards_to_go)
                 q_n += rewards_to_go
         else:
             for advantages in re_n:
                 sum = 0
-                for i in range(len(advantages)-1,0,-1):
+                for i in range(len(advantages)-1,-1,-1):
                     advantage = advantages[i]
-                    sum += advantage + self.gamma * sum
+                    sum = advantage + self.gamma * sum
                 q_n += [sum] * len(advantages)
         return q_n
 
@@ -521,8 +548,9 @@ class Agent(object):
         if self.normalize_advantages:
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1.
-            raise NotImplementedError
-            adv_n = None # YOUR_CODE_HERE
+            #raise NotImplementedError
+            #adv_n = None # YOUR_CODE_HERE
+            adv_n = (adv_n - np.mean(adv_n))/np.std(adv_n)
         return q_n, adv_n
 
     def update_parameters(self, ob_no, ac_na, q_n, adv_n):
@@ -572,12 +600,20 @@ class Agent(object):
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
-        # YOUR_CODE_HERE
-        self.sess.run([self.loss, self.update_op, self.loss], {
+        loss_before = self.sess.run([self.loss], {
             self.sy_ob_no: ob_no,
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
+
+        # YOUR_CODE_HERE
+        _ , loss_after = self.sess.run([self.update_op, self.loss], {
+            self.sy_ob_no: ob_no,
+            self.sy_ac_na: ac_na,
+            self.sy_adv_n: adv_n
+        })
+        print("Loss before {}, loss after {}".format(loss_before,loss_after))
+
         #raise NotImplementedError
 
 
@@ -590,7 +626,7 @@ def train_PG(
         max_path_length,
         learning_rate, 
         reward_to_go, 
-        animate, 
+        animate,
         logdir, 
         normalize_advantages,
         nn_baseline, 
@@ -606,8 +642,8 @@ def train_PG(
     setup_logger(logdir, locals())
 
     #========================================================================================#
-    # Set Up Env
-    #========================================================================================#
+    # Set Up Envmin_timesteps_per_batch
+    #====after====================================================================================#
 
     # Make the gym environment
     env = gym.make(env_name)
@@ -751,16 +787,16 @@ def main():
                 )
         # # Awkward hacky process runs, because Tensorflow does not like
         # # repeatedly calling train_PG in the same thread.
-        train_func()
-        #p = Process(target=train_func, args=tuple())
-        #p.start()
-        #processes.append(p)
+        #train_func()
+        p = Process(target=train_func, args=tuple())
+        p.start()
+        processes.append(p)
         # if you comment in the line below, then the loop will block 
         # until this process finishes
-        # p.join()
+        p.join()
 
-    #for p in processes:
-        #p.join()
+    for p in processes:
+        p.join()
 
 if __name__ == "__main__":
     main()
