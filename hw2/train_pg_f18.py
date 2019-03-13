@@ -12,8 +12,8 @@ import time
 import inspect
 from multiprocessing import Process
 from functools import reduce
-import ray
-ray.init()
+#import ray
+#ray.init()
 #============================================================================================#
 # Utilities
 #============================================================================================#
@@ -40,21 +40,22 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
         Hint: use tf.layers.dense    
     """
     # YOUR CODE HERE
-    output_placeholder = None
-    if n_layers < 1:
-        raise 'n_layers should be > 0'
-    else:
-        prev_layer = input_placeholder
-        for i in range(n_layers):
-            if i == n_layers - 1:
-                activation = output_activation
-                size = output_size
-            output_placeholder = prev_layer = tf.contrib.layers.fully_connected(
-                inputs = prev_layer,
-                num_outputs = size,
-                activation_fn = activation,
-                #scope = "{}/{}".format(scope,i)
-            )
+    with tf.variable_scope(scope):
+        output_placeholder = None
+        if n_layers < 1:
+            raise 'n_layers should be > 0'
+        else:
+            prev_layer = input_placeholder
+            for i in range(n_layers):
+                if i == n_layers - 1:
+                    activation = output_activation
+                    size = output_size
+                output_placeholder = prev_layer = tf.contrib.layers.fully_connected(
+                    inputs = prev_layer,
+                    num_outputs = size,
+                    activation_fn = activation,
+                    #scope = "{}/{}".format(scope,i)
+                )
     return output_placeholder
 
 def pathlength(path):
@@ -205,18 +206,25 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         if self.discrete:
             sy_logits_na = policy_parameters
             # YOUR_CODE_HERE
-            action_probs = tf.nn.softmax(sy_logits_na)
+            action_probs = tf.nn.softmax(sy_logits_na,dim=1)
             self.action_probs = action_probs
-            #TODO: rewrite using 
-            # action = np.random.choice(range(self.ac), p=action_probs)
-            sy_sampled_ac = tf.map_fn(lambda probs: tf.cast(tf.distributions.Categorical(probs=probs).sample(),tf.float32),action_probs,parallel_iterations=False)
+            sy_sampled_ac = tf.map_fn(lambda probs: tf.cast(tf.distributions.Categorical(probs=probs).sample(),
+                tf.float32),
+                action_probs,
+                parallel_iterations=False)
+            sy_sampled_ac = tf.cast(sy_sampled_ac,tf.int32)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             stds = tf.exp(sy_logstd)
-            zs = tf.random.normal([None,self.ac_dim])
-            scaled = tf.map_fn(lambda action_sig:  tf.multiply(action_sig,stds), zs)
-            sy_sampled_ac = sy_mean + scaled
+            #zs = tf.random.normal([sy_mean.shape[0],self.ac_dim])
+            #scaled = tf.map_fn(lambda action_sig: tf.multiply(action_sig,stds),
+            #zs)
+            #sy_sampled_ac = sy_mean + scaled
+            #sy_sampled_ac = tf.map_fn(lambda mean: tf.multiply(action_sig,stds),
+            #mean)
+            sy_sampled_ac = tf.map_fn(lambda mean: mean + tf.random.normal([self.ac_dim])*stds,sy_mean)
+            
         return sy_sampled_ac
 
     #========================================================================================#
@@ -248,23 +256,22 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
-            #probs  = tf.nn.softmax(sy_logits_na)
-            #Add action to last column such that it can be used in combination with map
-            #concated = tf.concat([probs, tf.reshape(tf.cast(sy_ac_na, tf.float32),[-1,1])],axis=1)
-            #sy_logprob_n =  tf.map_fn(lambda t: tf.gather(t,tf.cast(tf.gather(t,[int(self.ac_dim)]),dtype=tf.int32)),concated)
-            #sy_logprob_n = - tf.nn.softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
             sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             #Add action to last column such that it can be used in combination with map
             concated = tf.concat([sy_mean,sy_ac_na], axis=1)
-            sy_logprob_n = tf.map_fn(lambda t: tf.distributions.Normal(
-                loc=tf.gather(t,range(self.ac_dim)),
-                scale=tf.exp(sy_logstd)
-                ).log_prob(
-                    tf.gather(t,range(self.ac_dim,self.ac_dim*2))),
-            concated)
+            def map_fun(t):
+                mean = tf.gather(t,list(range(self.ac_dim)))
+                action = tf.gather(t,list(range(self.ac_dim,self.ac_dim*2)))
+                dist  = tf.distributions.Normal(
+                    loc=mean,
+                    scale=tf.exp(sy_logstd)
+                )
+                return dist.log_prob(mean - action)
+                
+            sy_logprob_n = -tf.map_fn(map_fun, concated)
             
         return sy_logprob_n
 
@@ -309,7 +316,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #loss = None # YOUR CODE HERE
         #COMES AS NEGATIVE
         self.loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss, global_step=tf.train.get_global_step())
+        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
 
         #========================================================================================#
         #                           ----------PROBLEM 6----------
@@ -350,23 +357,23 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
 
 
     
-    @ray.remote
-    class Simulator(object):
-        def __init__(self,env_str,max_path_length):
-            self.env = gym.make(env_str)
-            #self.agent = agent
-            self.max_path_length = max_path_length
+    # @ray.remote
+    # class Simulator(object):
+    #     def __init__(self,env_str,max_path_length):
+    #         self.env = gym.make(env_str)
+    #         #self.agent = agent
+    #         self.max_path_length = max_path_length
 
-        def sample(self,ray_agent_id):
-            self.env.reset()
-            agent = ray.get(ray_agent_id)
-            return agent.sample_trajectory(self.env,False,self.max_path_length)
+    #     def sample(self,ray_agent_id):
+    #         self.env.reset()
+    #         agent = ray.get(ray_agent_id)
+    #         return agent.sample_trajectory(self.env,False,self.max_path_length)
 
 
-    def sample_trajectories_parallel(self, env, n_parallel=1):
-        ray_agent_id = ray.put(self)
-        simulators = [self.Simulator.remote(env.spec.id, self.max_path_length/n_parallel)]*n_parallel
-        return [simulator.sample.remote(ray_agent_id) for simulator in simulators]
+    # def sample_trajectories_parallel(self, env, n_parallel=1):
+    #     ray_agent_id = ray.put(self)
+    #     simulators = [self.Simulator.remote(env.spec.id, self.max_path_length/n_parallel)]*n_parallel
+    #     return [simulator.sample.remote(ray_agent_id) for simulator in simulators]
 
     def sample_trajectory(self, env, animate_this_episode,max_path_length):
         ob = env.reset()
@@ -380,7 +387,8 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             #====================================================================================#
             #                           ----------PROBLEM 3----------
             #====================================================================================#
-            ac = self.sess.run(tf.cast(self.sy_sampled_ac, tf.int32),feed_dict={self.sy_ob_no: ob.reshape(1,-1)}) # YOUR CODE HERE
+            ac = self.sess.run(self.sy_sampled_ac,
+                    feed_dict={self.sy_ob_no: ob.reshape(1,-1)}) # YOUR CODE HERE
             ac = ac[0]
             acs.append(ac)
             ob, rew, done, _ = env.step(ac)
