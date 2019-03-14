@@ -177,7 +177,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                 shape=[self.ac_dim],
                 trainable=True,
                 dtype=tf.float32,
-                initializer=tf.constant_initializer(np.log(10.0))
+                initializer=tf.constant_initializer(np.log(1.0))
             )
 
             return (sy_mean, sy_logstd)
@@ -262,7 +262,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #raise NotImplementedError
         if self.discrete:
             sy_logits_na = policy_parameters
-            sy_logprob_n = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
+            sy_logprob_n = -tf.nn.sparse_softmax_cross_entropy_with_logits(labels=sy_ac_na, logits=sy_logits_na)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
@@ -280,12 +280,13 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             #sy_logprob_n = -tf.map_fn(map_fun, concated)
             
             
-            #std = tf.exp(sy_logstd)
-            #variance = (std*std)
-            #inverse_variance = 1/variance
+            std = tf.exp(sy_logstd)
+            variance = (std*std)
+            inverse_variance = 1/variance
             diff = sy_mean -sy_ac_na
             #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
-            sy_logprob_n = -tf.losses.mean_squared_error(sy_mean, sy_ac_na)
+            sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
+            #sy_logprob_n = -tf.losses.mean_squared_error(sy_mean, sy_ac_na)
             
         return sy_logprob_n
 
@@ -328,7 +329,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         # Loss Function and Training Operation
         #========================================================================================#
         #loss = None # YOUR CODE HERE
-        self.loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
+        self.loss = -tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
         self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
         #self.update_op =  tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
         #========================================================================================#
@@ -628,14 +629,14 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         })
 
         # YOUR_CODE_HERE
-        try:
-            _ , loss_after = self.sess.run([self.update_op, self.loss], {
+        #try:
+        _ , loss_after = self.sess.run([self.update_op, self.loss], {
             self.sy_ob_no: ob_no,
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
-        except Exception as e:
-            print("failed update. Failed with {}".format(e))
+        #except Exception as e:
+        #    print("failed update. Failed with {}".format(e))
         print("Loss before {}, loss after {}".format(loss_before,loss_after))
 
         #raise NotImplementedError
