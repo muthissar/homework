@@ -172,7 +172,13 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                 size=self.size
             )
             sy_mean = network
-            sy_logstd = tf.get_variable("policy_continous_logstd", shape=[self.ac_dim],trainable=True)
+            sy_logstd = tf.get_variable(
+                "policy_continous_logstd", 
+                shape=[self.ac_dim],
+                trainable=True,
+                dtype=tf.float32,
+                initializer=tf.constant_initializer(np.log(10.0))
+            )
 
             return (sy_mean, sy_logstd)
 
@@ -261,17 +267,25 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             #Add action to last column such that it can be used in combination with map
-            concated = tf.concat([sy_mean,sy_ac_na], axis=1)
-            def map_fun(t):
-                mean = tf.gather(t,list(range(self.ac_dim)))
-                action = tf.gather(t,list(range(self.ac_dim,self.ac_dim*2)))
-                dist  = tf.distributions.Normal(
-                    loc=mean,
-                    scale=tf.exp(sy_logstd)
-                )
-                return dist.log_prob(mean - action)
+            #concated = tf.concat([sy_mean,sy_ac_na], axis=1)
+            #def map_fun(t):
+            #    mean = tf.gather(t,list(range(self.ac_dim)))
+            #    action = tf.gather(t,list(range(self.ac_dim,self.ac_dim*2)))
+                #dist  = tf.distributions.Normal(
+                #    loc=mean,
+                #    scale=tf.exp(sy_logstd)
+                #)
+            #    return dist.log_prob(mean - action)
                 
-            sy_logprob_n = -tf.map_fn(map_fun, concated)
+            #sy_logprob_n = -tf.map_fn(map_fun, concated)
+            
+            
+            #std = tf.exp(sy_logstd)
+            #variance = (std*std)
+            #inverse_variance = 1/variance
+            diff = sy_mean -sy_ac_na
+            #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
+            sy_logprob_n = -tf.losses.mean_squared_error(sy_mean, sy_ac_na)
             
         return sy_logprob_n
 
@@ -314,10 +328,9 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         # Loss Function and Training Operation
         #========================================================================================#
         #loss = None # YOUR CODE HERE
-        #COMES AS NEGATIVE
         self.loss = tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
-        self.update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
-
+        self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #self.update_op =  tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
         #========================================================================================#
         #                           ----------PROBLEM 6----------
         # Optional Baseline
@@ -608,18 +621,21 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         # For debug purposes, you may wish to save the value of the loss function before
         # and after an update, and then log them below. 
 
-        loss_before = self.sess.run([self.loss], {
+        loss_before = self.sess.run(self.loss, {
             self.sy_ob_no: ob_no,
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
 
         # YOUR_CODE_HERE
-        _ , loss_after = self.sess.run([self.update_op, self.loss], {
+        try:
+            _ , loss_after = self.sess.run([self.update_op, self.loss], {
             self.sy_ob_no: ob_no,
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
+        except Exception as e:
+            print("failed update. Failed with {}".format(e))
         print("Loss before {}, loss after {}".format(loss_before,loss_after))
 
         #raise NotImplementedError
@@ -795,16 +811,16 @@ def main():
                 )
         # # Awkward hacky process runs, because Tensorflow does not like
         # # repeatedly calling train_PG in the same thread.
-        #train_func()
-        p = Process(target=train_func, args=tuple())
-        p.start()
-        processes.append(p)
+        train_func()
+        #p = Process(target=train_func, args=tuple())
+        #p.start()
+        #processes.append(p)
         # if you comment in the line below, then the loop will block 
         # until this process finishes
-        p.join()
+        #p.join()
 
-    for p in processes:
-        p.join()
+    #for p in processes:
+    #    p.join()
 
 if __name__ == "__main__":
     main()
