@@ -285,7 +285,8 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             inverse_variance = 1/variance
             diff = sy_mean -sy_ac_na
             #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
-            sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
+            #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
+            sy_logprob_n = -1/2 * inverse_variance * tf.reduce_sum(diff,axis=1)
             #sy_logprob_n = -tf.losses.mean_squared_error(sy_mean, sy_ac_na)
             
         return sy_logprob_n
@@ -331,6 +332,8 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #loss = None # YOUR CODE HERE
         self.loss = -tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
         self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate,beta1=0.8,beta2=0.99).minimize(self.loss)
+        #self.update_op =  tf.train.RMSPropOptimizer(self.learning_rate,momentum=0.9).minimize(self.loss)
         #self.update_op =  tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
         #========================================================================================#
         #                           ----------PROBLEM 6----------
@@ -340,7 +343,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         # neural network baseline. These will be used to fit the neural network baseline. 
         #========================================================================================#
         if self.nn_baseline:
-            raise NotImplementedError
+            #raise NotImplementedError
             self.baseline_prediction = tf.squeeze(build_mlp(
                                     self.sy_ob_no, 
                                     1, 
@@ -348,8 +351,8 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                                     n_layers=self.n_layers,
                                     size=self.size))
             # YOUR_CODE_HERE
-            self.sy_target_n = None
-            baseline_loss = None
+            self.sy_target_n = tf.placeholder(shape=[None], name="tar", dtype=tf.float32)
+            baseline_loss = tf.losses.mean_squared_error(labels=self.sy_target_n,predictions=self.baseline_prediction)
             self.baseline_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(baseline_loss)
 
     def sample_trajectories(self, itr, env):
@@ -535,8 +538,10 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             # Hint #bl1: rescale the output from the nn_baseline to match the statistics
             # (mean and std) of the current batch of Q-values. (Goes with Hint
             # #bl2 in Agent.update_parameters.
-            raise NotImplementedError
-            b_n = None # YOUR CODE HERE
+            #raise NotImplementedError
+            b_n = self.sess.run(self.baseline_prediction, {
+                self.sy_ob_no: ob_no
+            }) # YOUR CODE HERE
             adv_n = q_n - b_n
         else:
             adv_n = q_n.copy()
@@ -608,8 +613,12 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             # Agent.compute_advantage.)
 
             # YOUR_CODE_HERE
-            raise NotImplementedError
-            target_n = None 
+            #raise NotImplementedError
+            target_n = (q_n - np.mean(q_n))/np.std(q_n)
+            self.sess.run(self.baseline_update_op, {
+                self.sy_ob_no: ob_no,
+                self.sy_target_n: target_n
+            })
 
         #====================================================================================#
         #                           ----------PROBLEM 3----------
@@ -630,7 +639,12 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
 
         # YOUR_CODE_HERE
         #try:
-        _ , loss_after = self.sess.run([self.update_op, self.loss], {
+        self.sess.run(self.update_op, {
+            self.sy_ob_no: ob_no,
+            self.sy_ac_na: ac_na,
+            self.sy_adv_n: adv_n
+        })
+        loss_after = self.sess.run(self.loss, {
             self.sy_ob_no: ob_no,
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
