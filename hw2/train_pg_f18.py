@@ -95,7 +95,14 @@ class Agent(object):
         self.normalize_advantages = estimate_return_args['normalize_advantages']
 
     def init_tf_sess(self):
-        tf_config = tf.ConfigProto(inter_op_parallelism_threads=1, intra_op_parallelism_threads=1) 
+        tf_config = tf.ConfigProto(inter_op_parallelism_threads=1,
+            #device_count = {'GPU': 2},
+            intra_op_parallelism_threads=1,
+            gpu_options = tf.GPUOptions(
+                #per_process_gpu_memory_fraction=1./16. # 1gb
+                allow_growth=True
+                )
+        )
         self.sess = tf.Session(config=tf_config)
         self.sess.__enter__() # equivalent to `with self.sess:`
         tf.global_variables_initializer().run() #pylint: disable=E1101
@@ -180,6 +187,8 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                 trainable=True,
                 dtype=tf.float32,
                 initializer=tf.constant_initializer(np.log(1))
+                #initializer=tf.constant_initializer(np.log(0.01))
+                #initializer=tf.constant_initializer(np.log(np.sqrt(10)))
             )
 
             return (sy_mean, sy_logstd)
@@ -288,8 +297,10 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             diff = sy_mean -sy_ac_na
             #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
             #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
-            squared_erros = tf.squared_difference(sy_mean,sy_ac_na)
-            sy_logprob_n = -1/2 * tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
+            #squared_erros = tf.squared_difference(sy_mean,sy_ac_na)
+            #sy_logprob_n =  -1/2 * tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
+            sy_logprob_n =  -tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
+            #sy_logprob_n = - 1/2*(tf.reduce_sum(tf.log(variance))  + tf.reduce_sum(inverse_variance *(diff*diff),axis=1))
             #sy_logprob_n = tf.nn.
             #sy_logprob_n = inverse_variance * tf.losses.mean_squared_error(sy_mean, sy_ac_na)
             
@@ -335,9 +346,12 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #========================================================================================#
         #loss = None # YOUR CODE HERE
         self.loss = -tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
-        self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        #self.update_op =  tf.train.AdamOptimizer(self.learning_rate,beta1=0.9,beta2=0.99).minimize(self.loss)
         #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate,beta1=0.99,beta2=0.9999).minimize(self.loss)
         #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate,beta1=0.8,beta2=0.99).minimize(self.loss)
+        #self.update_op =  tf.train.AdamOptimizer(self.learning_rate,beta1=0.9,beta2=0.99).minimize(self.loss)
+        self.update_op =  tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
         #self.update_op =  tf.train.RMSPropOptimizer(self.learning_rate,momentum=0.9).minimize(self.loss)
         #self.update_op =  tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
         #========================================================================================#
@@ -655,7 +669,11 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
-        std = self.sess.run(tf.exp(self.policy_parameters[1]))
+        std = self.sess.run(tf.exp(self.policy_parameters[1]),{
+            self.sy_ob_no: ob_no,
+            self.sy_ac_na: ac_na,
+            self.sy_adv_n: adv_n
+        })
         #except Exception as e:
         #    print("failed update. Failed with {}".format(e))
         print("Loss before {}, loss after {}".format(loss_before,loss_after))
@@ -834,16 +852,16 @@ def main():
                 )
         # # Awkward hacky process runs, because Tensorflow does not like
         # # repeatedly calling train_PG in the same thread.
-        train_func()
-        #p = Process(target=train_func, args=tuple())
-        #p.start()
-        #processes.append(p)
+        #train_func()
+        p = Process(target=train_func, args=tuple())
+        p.start()
+        processes.append(p)
         # if you comment in the line below, then the loop will block 
         # until this process finishes
         #p.join()
 
-    #for p in processes:
-    #    p.join()
+    for p in processes:
+        p.join()
 
 if __name__ == "__main__":
     main()
