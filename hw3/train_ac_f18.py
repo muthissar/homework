@@ -287,8 +287,8 @@ class Agent(object):
         # This is used in the loss function.
         self.sy_logprob_n = self.get_log_prob(self.policy_parameters, self.sy_ac_na)
 
-        actor_loss = tf.reduce_sum(-self.sy_logprob_n * self.sy_adv_n)
-        self.actor_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(actor_loss)
+        self.actor_loss = tf.reduce_sum(-self.sy_logprob_n * self.sy_adv_n)
+        self.actor_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.actor_loss)
 
         # define the critic
         self.critic_prediction = tf.squeeze(build_mlp(
@@ -300,6 +300,7 @@ class Agent(object):
         self.sy_target_n = tf.placeholder(shape=[None], name="critic_target", dtype=tf.float32)
         self.critic_loss = tf.losses.mean_squared_error(self.sy_target_n, self.critic_prediction)
         self.critic_update_op = tf.train.AdamOptimizer(self.learning_rate).minimize(self.critic_loss)
+        #self.critic_update_op = tf.train.GradientDescentOptimizer(0.1).minimize(self.critic_loss)
 
     def sample_trajectories(self, itr, env):
         # Collect paths until we have enough timesteps
@@ -375,15 +376,28 @@ class Agent(object):
         # Note: don't forget to use terminal_n to cut off the V(s') term when computing Q(s, a)
         # otherwise the values will grow without bound.
         # YOUR CODE HERE
+        v_ob_no = self.sess.run(self.critic_prediction, feed_dict={self.sy_ob_no: ob_no})
         v_next_ob_no = self.sess.run(self.critic_prediction, feed_dict={self.sy_ob_no: next_ob_no})
         v_next_ob_no = v_next_ob_no * (1 - terminal_n)
-        q = re_n + self.gamma * v_next_ob_no
-        v_ob_no = self.sess.run(self.critic_prediction, feed_dict={self.sy_ob_no: ob_no})
-        adv_n = q - v_ob_no
+        
+        y = re_n + self.gamma * v_next_ob_no
+        
+        adv_n = y - v_ob_no
+        terminal_indices = terminal_n.nonzero()[0]
+        terminal_indices_hack = [-1] + list(terminal_indices)
+        lengths = np.diff(terminal_indices_hack)
+        best = np.argmax(lengths)
+        worst = np.argmin(lengths)
         if self.normalize_advantages:
             #raise NotImplementedError
             adv_n = (adv_n - np.mean(adv_n))/np.std(adv_n) # YOUR_HW2 CODE_HERE
         #print({"adv_n {}".format(adv_n)})
+        best_advantages = adv_n[(terminal_indices_hack[best]+1):terminal_indices_hack[best+1]]
+        worst_advantages = adv_n[(terminal_indices_hack[worst]+1):terminal_indices_hack[worst+1]]
+        mean_adv_best = np.mean(best_advantages)
+        mean_adv_worst = np.mean(worst_advantages)
+        episodes = np.split(adv_n,terminal_indices+1)
+        len_mean_adv = [(len(episode), np.mean(episode)) for episode in episodes]
         return adv_n
 
     def update_critic(self, ob_no, next_ob_no, re_n, terminal_n):
@@ -414,13 +428,24 @@ class Agent(object):
 
         # otherwise the values will grow without bound.
         # YOUR CODE HERE
-        
+        first_run = True
+        y = False
+        first_terminal = list(terminal_n).index(1)
+        def print_q_vals():
+            print("q vals {}".format(self.sess.run(self.critic_prediction, feed_dict={self.sy_ob_no: ob_no})[:first_terminal]))
         for _ in range(self.num_target_updates):
             v_next_ob_no = self.sess.run(self.critic_prediction, feed_dict={self.sy_ob_no: next_ob_no})
             v_next_ob_no = v_next_ob_no * (1 - terminal_n)
-            q = re_n + self.gamma * v_next_ob_no
+            y = re_n + self.gamma * v_next_ob_no
+            if first_run:
+                print("Loss critic before: {}".format(self.sess.run(self.critic_loss, feed_dict={self.sy_target_n: y, self.sy_ob_no: ob_no})))
+                print_q_vals()
+            first_run = False
             for _ in range(self.num_grad_steps_per_target_update):
-                self.sess.run(self.critic_update_op, feed_dict={self.sy_target_n: q, self.sy_ob_no: ob_no})
+                
+                self.sess.run(self.critic_update_op, feed_dict={self.sy_target_n: y, self.sy_ob_no: ob_no})
+        print("Loss critic after: {}".format(self.sess.run(self.critic_loss, feed_dict={self.sy_target_n: y, self.sy_ob_no: ob_no})))
+        print_q_vals()
         #raise NotImplementedError
 
     def update_actor(self, ob_no, ac_na, adv_n):
@@ -437,8 +462,10 @@ class Agent(object):
                 nothing
 
         """
+        #print("Loss actor before: {}".format(self.sess.run(self.actor_loss, feed_dict={self.sy_ob_no: ob_no, self.sy_ac_na: ac_na, self.sy_adv_n: adv_n})))
         self.sess.run(self.actor_update_op,
             feed_dict={self.sy_ob_no: ob_no, self.sy_ac_na: ac_na, self.sy_adv_n: adv_n})
+        #print("Loss actor before: {}".format(self.sess.run(self.actor_loss, feed_dict={self.sy_ob_no: ob_no, self.sy_ac_na: ac_na, self.sy_adv_n: adv_n})))
 
 
 def train_AC(
@@ -622,16 +649,16 @@ def main():
                 )
         # # Awkward hacky process runs, because Tensorflow does not like
         # # repeatedly calling train_AC in the same thread.
-        train_func()
-        #p = Process(target=train_func, args=tuple())
-        #p.start()
-        #processes.append(p)
+        #train_func()
+        p = Process(target=train_func, args=tuple())
+        p.start()
+        processes.append(p)
         # if you comment in the line below, then the loop will block 
         # until this process finishes
         # p.join()
 
-    #for p in processes:
-        #p.join()
+    for p in processes:
+        p.join()
         
 
 if __name__ == "__main__":

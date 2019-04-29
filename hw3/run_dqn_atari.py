@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 
-import dqn
+import dqn as dqn
 from dqn_utils import *
 from atari_wrappers import *
 
@@ -91,6 +91,9 @@ def set_global_seeds(i):
         pass
     else:
         tf.set_random_seed(i)
+
+
+        
     np.random.seed(i)
     random.seed(i)
 
@@ -98,7 +101,12 @@ def get_session():
     tf.reset_default_graph()
     tf_config = tf.ConfigProto(
         inter_op_parallelism_threads=1,
-        intra_op_parallelism_threads=1)
+        intra_op_parallelism_threads=1,
+        gpu_options = tf.GPUOptions(
+            #per_process_gpu_memory_fraction=1./16. # 1gb
+            allow_growth=True
+        )
+    )
     session = tf.Session(config=tf_config)
     print("AVAILABLE GPUS: ", get_available_gpus())
     return session

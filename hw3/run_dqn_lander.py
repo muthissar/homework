@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.layers as layers
 
-import dqn
+import dqn as dqn
 from dqn_utils import *
 
 def lander_model(obs, num_actions, scope, reuse=False):
