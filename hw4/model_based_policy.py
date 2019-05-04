@@ -68,30 +68,41 @@ class ModelBasedPolicy(object):
         ### PROBLEM 1
         ### YOUR CODE HERE
         #(a)
-        state_mean = self._init_dataset.state_mean
-        state_std = self._init_dataset.state_std + 1e-8
-        state = (state - state_mean)/state_std
+        #state_mean = self._init_dataset.state_mean
+        #state_std = self._init_dataset.state_std + 1e-8
+        #state = (state - state_mean)/state_std
 
-        action_mean = self._init_dataset.action_mean
-        action_std = self._init_dataset.action_std + 1e-8
-        action = (action - action_mean)/action_std
+        #action_mean = self._init_dataset.action_mean
+        #action_std = self._init_dataset.action_std + 1e-8
+        #action = (action - action_mean)/action_std
+        state_norm  = utils.normalize(state,  self._init_dataset.state_mean,  self._init_dataset.state_std)
+        action_norm = utils.normalize(action, self._init_dataset.action_mean, self._init_dataset.action_std)
+        
+        # CHECKED SCOPE NOT USED
+        
+        
+
         #(b)
         #self.state_action = np.concatenate((state,action),axis=-1)
-        state_action = tf.concat([state,action],axis=-1)
+        # state_action = tf.concat([state,action],axis=1)
+        state_action = tf.concat([state_norm, action_norm], axis=1)
         #(c)
-        delta_state = utils.build_mlp(state_action,
-            self._state_dim,
-            'nn_dynamics',
-            n_layers=self._nn_layers,
-            reuse=reuse)
+        state_diff_normalized = utils.build_mlp(state_action, self._state_dim, scope='nn_dynamics', n_layers=self._nn_layers, reuse=reuse)
+        #delta_state = utils.build_mlp(state_action,
+        #    self._state_dim,
+        #    'nn_dynamics',
+        #    n_layers=self._nn_layers,
+        #    reuse=reuse)
         #state_delta = self._sess.run(self._nn_dynamics, feed_dict={
         #    self._state_action_ph: state_action
         #})
         #(d)
-        delta_state_mean = self._init_dataset.delta_state_mean
-        delta_state_std = self._init_dataset.delta_state_std
-        delta_state = delta_state * delta_state_std + delta_state_mean
-        next_state_pred = state + delta_state
+        #delta_state_mean = self._init_dataset.delta_state_mean
+        #delta_state_std = self._init_dataset.delta_state_std
+        #delta_state = delta_state * delta_state_std + delta_state_mean
+        #next_state_pred = state + delta_state
+        state_diff = utils.unnormalize(state_diff_normalized, self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
+        next_state_pred = state_diff + state
         return next_state_pred
 
     def _setup_training(self, state_ph, next_state_ph, next_state_pred):
@@ -118,12 +129,12 @@ class ModelBasedPolicy(object):
         actual_diff = next_state_ph -  state_ph
         pred_diff = next_state_pred - state_ph
         #(b)
-        delta_state_mean = self._init_dataset.delta_state_mean
-        delta_state_std = self._init_dataset.delta_state_std +1e-8
-        self.actual_diff = (actual_diff - delta_state_mean)/(delta_state_std)
-        self.pred_diff = (pred_diff - delta_state_mean)/(delta_state_std)
+        #delta_state_mean = self._init_dataset.delta_state_mean
+        #delta_state_std = self._init_dataset.delta_state_std +1e-8
+        actual_diff_norm = utils.normalize(actual_diff,self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
+        pred_diff_norm = utils.normalize(pred_diff,self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
         #(c)
-        loss = tf.losses.mean_squared_error(self.actual_diff, self.pred_diff)
+        loss = tf.losses.mean_squared_error(actual_diff_norm, pred_diff_norm)
         #(d)
         optimizer = tf.train.AdamOptimizer(self._learning_rate).minimize(loss)
         return loss, optimizer
@@ -192,7 +203,7 @@ class ModelBasedPolicy(object):
         ### YOUR CODE HERE
         state_ph, action_ph, next_state_ph = self._setup_placeholders()
         #self._state_action_ph = tf.concat([state_ph,action_ph],axis=-1)
-        next_state_pred = self._dynamics_func(state_ph,action_ph, reuse = False)
+        next_state_pred = self._dynamics_func(state_ph, action_ph, reuse = False)
         loss, optimizer = self._setup_training(state_ph,next_state_ph,next_state_pred)
         #raise NotImplementedError
         ### PROBLEM 2

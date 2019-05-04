@@ -34,7 +34,7 @@ mbrl = ModelBasedRL(env=env,
                     render=args.render,
                     mpc_horizon=args.mpc_horizon,
                     num_random_action_selection=args.num_random_action_selection,
-                    training_epochs=1000,
+                    training_epochs=60,
                     
                     nn_layers=args.nn_layers)
 

@@ -131,9 +131,9 @@ class ModelBasedRL(object):
             ### PROBLEM 1
             ### YOUR CODE HERE
             #(ii)
-            #state = states[0]
-            for action in actions:
-                state = self._policy.predict(states[0],action)
+            state = states[0]
+            for i in range(np.shape(states)[0]):
+                state = self._policy.predict(state, actions[i])
                 pred_states.append(state)
 
             states = np.asarray(states)
@@ -194,16 +194,18 @@ class ModelBasedRL(object):
             ### PROBLEM 3
             ### YOUR CODE HERE
             logger.info('Training policy...')
-            raise NotImplementedError
+            #raise NotImplementedError
+            self._train_policy(self._random_dataset)
 
             ### PROBLEM 3
             ### YOUR CODE HERE
             logger.info('Gathering rollouts...')
-            raise NotImplementedError
+            #raise NotImplementedError
+            new_dataset = self._gather_rollouts(self._policy,self._num_onpolicy_rollouts)
 
             ### PROBLEM 3
             ### YOUR CODE HERE
             logger.info('Appending dataset...')
-            raise NotImplementedError
-
+            #raise NotImplementedError
+            dataset.append(new_dataset)
             self._log(new_dataset)
