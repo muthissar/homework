@@ -41,7 +41,9 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
+        state_ph = tf.placeholder(tf.float32, [None,self._state_dim])
+        next_state_ph = tf.placeholder(tf.float32, [None,self._state_dim])
+        action_ph = tf.placeholder(tf.float32, [None,self._action_dim])
 
         return state_ph, action_ph, next_state_ph
 
@@ -65,8 +67,31 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
+        #(a)
+        state_mean = self._init_dataset.state_mean
+        state_std = self._init_dataset.state_std + 1e-8
+        state = (state - state_mean)/state_std
 
+        action_mean = self._init_dataset.action_mean
+        action_std = self._init_dataset.action_std + 1e-8
+        action = (action - action_mean)/action_std
+        #(b)
+        #self.state_action = np.concatenate((state,action),axis=-1)
+        state_action = tf.concat([state,action],axis=-1)
+        #(c)
+        delta_state = utils.build_mlp(state_action,
+            self._state_dim,
+            'nn_dynamics',
+            n_layers=self._nn_layers,
+            reuse=reuse)
+        #state_delta = self._sess.run(self._nn_dynamics, feed_dict={
+        #    self._state_action_ph: state_action
+        #})
+        #(d)
+        delta_state_mean = self._init_dataset.delta_state_mean
+        delta_state_std = self._init_dataset.delta_state_std
+        delta_state = delta_state * delta_state_std + delta_state_mean
+        next_state_pred = state + delta_state
         return next_state_pred
 
     def _setup_training(self, state_ph, next_state_ph, next_state_pred):
@@ -89,8 +114,18 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
-
+        #(a)
+        actual_diff = next_state_ph -  state_ph
+        pred_diff = next_state_pred - state_ph
+        #(b)
+        delta_state_mean = self._init_dataset.delta_state_mean
+        delta_state_std = self._init_dataset.delta_state_std +1e-8
+        self.actual_diff = (actual_diff - delta_state_mean)/(delta_state_std)
+        self.pred_diff = (pred_diff - delta_state_mean)/(delta_state_std)
+        #(c)
+        loss = tf.losses.mean_squared_error(self.actual_diff, self.pred_diff)
+        #(d)
+        optimizer = tf.train.AdamOptimizer(self._learning_rate).minimize(loss)
         return loss, optimizer
 
     def _setup_action_selection(self, state_ph):
@@ -122,8 +157,27 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 2
         ### YOUR CODE HERE
-        raise NotImplementedError
-
+        #raise NotImplementedError
+        #for _ in self._num_random_action_selection:
+        tiled_state = tf.tile(tf.squeeze(state_ph),tf.constant([self._num_random_action_selection]))
+        #tiled_state = tf.tile(state_ph,self._num_random_action_selection)
+        states = tf.reshape(tiled_state, [self._num_random_action_selection,self._state_dim])
+        self.first_states = states
+        cost = tf.constant(0.0,shape=[self._num_random_action_selection])
+        actions = self.first_actions =  tf.random_uniform([self._num_random_action_selection,self._action_dim],self._action_space_low, self._action_space_high) \
+                #* (self._action_space_low - self._action_space_high) + self._action_space_high
+                #* (self._action_space_high - self._action_space_low) + self._action_space_low
+        #for _ in range(self._horizon):
+        for _ in range(self._horizon):
+            next_states = self._dynamics_func(states, actions, reuse=True)
+            cost += self._cost_fn(states,actions,next_states)
+            actions = tf.random_uniform([self._num_random_action_selection,self._action_dim],self._action_space_low, self._action_space_high) \
+                #* (self._action_space_low - self._action_space_high) + self._action_space_high
+                #* (self._action_space_low - self._action_space_high ) + self._action_space_high
+            states = next_states
+        self.cost = cost
+        self.best_action_seq_index = tf.argmin(cost)
+        best_action = tf.gather(self.first_actions,self.best_action_seq_index)
         return best_action
 
     def _setup_graph(self):
@@ -136,10 +190,14 @@ class ModelBasedPolicy(object):
 
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
+        state_ph, action_ph, next_state_ph = self._setup_placeholders()
+        #self._state_action_ph = tf.concat([state_ph,action_ph],axis=-1)
+        next_state_pred = self._dynamics_func(state_ph,action_ph, reuse = False)
+        loss, optimizer = self._setup_training(state_ph,next_state_ph,next_state_pred)
+        #raise NotImplementedError
         ### PROBLEM 2
         ### YOUR CODE HERE
-        best_action = None
+        best_action = self._setup_action_selection(state_ph)
 
         sess.run(tf.global_variables_initializer())
 
@@ -155,8 +213,11 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
-
+        _, loss  = self._sess.run([self._optimizer,self._loss],feed_dict={
+            self._state_ph: states,
+            self._action_ph: actions,
+            self._next_state_ph: next_states
+        })
         return loss
 
     def predict(self, state, action):
@@ -174,8 +235,11 @@ class ModelBasedPolicy(object):
 
         ### PROBLEM 1
         ### YOUR CODE HERE
-        raise NotImplementedError
-
+        next_state_pred = self._sess.run(self._next_state_pred,{
+            self._state_ph: np.expand_dims(state,axis=0),
+            self._action_ph: np.expand_dims(action,axis=0)
+         })
+        next_state_pred = np.squeeze(next_state_pred, axis=0)
         assert np.shape(next_state_pred) == (self._state_dim,)
         return next_state_pred
 
@@ -190,7 +254,9 @@ class ModelBasedPolicy(object):
 
         ### PROBLEM 2
         ### YOUR CODE HERE
-        raise NotImplementedError
+        best_action = self._sess.run(self._best_action, {
+            self._state_ph: state.reshape(1,-1)
+        })
 
         assert np.shape(best_action) == (self._action_dim,)
         return best_action
