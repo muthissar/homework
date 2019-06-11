@@ -101,6 +101,7 @@ class QLearner(object):
         self.session = session
         self.exploration = exploration
         self.rew_file = str(uuid.uuid4()) + '.pkl' if rew_file is None else rew_file
+        self.mean_rew_file = 'mean_rew'+str(uuid.uuid4()) + '.pkl' if rew_file is None else rew_file
 
         ###############
         # BUILD MODEL #
@@ -201,7 +202,10 @@ class QLearner(object):
         self.model_initialized = False
         self.num_param_updates = 0
         self.mean_episode_reward = -float('nan')
+        self.mean_episode_rewards = []
         self.best_mean_episode_reward = -float('inf')
+        self.best_mean_episode_rewards = []
+        self.mean_episode_t = []
         self.last_obs = self.env.reset()
         self.log_every_n_steps = 10000
 
@@ -358,8 +362,10 @@ class QLearner(object):
 
         if len(episode_rewards) > 100:
             self.best_mean_episode_reward = max(self.best_mean_episode_reward, self.mean_episode_reward)
-
         if self.t % self.log_every_n_steps == 0 and self.model_initialized:
+            self.mean_episode_rewards.append(self.mean_episode_reward)
+            self.best_mean_episode_rewards.append(self.best_mean_episode_reward)
+            self.mean_episode_t.append(self.t)
             print("Timestep %d" % (self.t,))
             print("mean reward (100 episodes) %f" % self.mean_episode_reward)
             print("best mean reward %f" % self.best_mean_episode_reward)
@@ -372,6 +378,13 @@ class QLearner(object):
             self.start_time = time.time()
 
             sys.stdout.flush()
+
+            with open(self.mean_rew_file, 'wb') as f:
+                pickle.dump({
+                    'mean_rewards': self.mean_episode_rewards,
+                    'best_mean_rewards': self.best_mean_episode_rewards,
+                    't': self.mean_episode_t
+                }, f, pickle.HIGHEST_PROTOCOL)
 
             with open(self.rew_file, 'wb') as f:
                 pickle.dump(episode_rewards, f, pickle.HIGHEST_PROTOCOL)
