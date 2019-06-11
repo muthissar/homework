@@ -41,23 +41,19 @@ def build_mlp(input_placeholder, output_size, scope, n_layers, size, activation=
     """
     # YOUR CODE HERE
     with tf.variable_scope(scope):
-        output_placeholder = None
-        if n_layers < 1:
-            raise 'n_layers should be > 0'
-        else:
-            prev_layer = input_placeholder
-            for i in range(n_layers):
-                if i == n_layers - 1:
-                    activation = output_activation
-                    size = output_size
-                    output_placeholder = prev_layer = tf.contrib.layers.fully_connected(
-                    inputs = prev_layer,
-                    num_outputs = size,
-                    activation_fn = activation,
-                    weights_initializer=tf.zeros_initializer(),
-                    biases_initializer=tf.zeros_initializer()
-                    #scope = "{}/{}".format(scope,i)
-                )
+        layer = input_placeholder
+        for _ in range(n_layers):
+           layer = tf.layers.dense(
+               inputs=layer,
+               units=size,
+               activation=activation
+           )
+        output_placeholder = tf.layers.dense(
+            inputs=layer,
+            units=output_size,
+            activation=output_activation
+        )
+
     return output_placeholder
 
 def pathlength(path):
@@ -187,8 +183,6 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                 trainable=True,
                 dtype=tf.float32,
                 initializer=tf.constant_initializer(np.log(1))
-                #initializer=tf.constant_initializer(np.log(0.01))
-                #initializer=tf.constant_initializer(np.log(np.sqrt(10)))
             )
 
             return (sy_mean, sy_logstd)
@@ -234,12 +228,6 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
             stds = tf.exp(sy_logstd)
-            #zs = tf.random.normal([sy_mean.shape[0],self.ac_dim])
-            #scaled = tf.map_fn(lambda action_sig: tf.multiply(action_sig,stds),
-            #zs)
-            #sy_sampled_ac = sy_mean + scaled
-            #sy_sampled_ac = tf.map_fn(lambda mean: tf.multiply(action_sig,stds),
-            #mean)
             sy_sampled_ac = tf.map_fn(lambda mean: mean + tf.random.normal([self.ac_dim])*stds,sy_mean)
             
         return sy_sampled_ac
@@ -277,32 +265,15 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         else:
             sy_mean, sy_logstd = policy_parameters
             # YOUR_CODE_HERE
-            #Add action to last column such that it can be used in combination with map
-            #concated = tf.concat([sy_mean,sy_ac_na], axis=1)
-            #def map_fun(t):
-            #    mean = tf.gather(t,list(range(self.ac_dim)))
-            #    action = tf.gather(t,list(range(self.ac_dim,self.ac_dim*2)))
-                #dist  = tf.distributions.Normal(
-                #    loc=mean,
-                #    scale=tf.exp(sy_logstd)
-                #)
-            #    return dist.log_prob(mean - action)
-                
-            #sy_logprob_n = -tf.map_fn(map_fun, concated)
-            
-            
             std = tf.exp(sy_logstd)
             variance = (std*std)
             inverse_variance = 1/variance
             diff = sy_mean -sy_ac_na
-            #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
-            #sy_logprob_n = -tf.log(variance) - inverse_variance * tf.reduce_sum(diff,axis=1)
-            #squared_erros = tf.squared_difference(sy_mean,sy_ac_na)
-            #sy_logprob_n =  -1/2 * tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
-            sy_logprob_n =  -tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
-            #sy_logprob_n = - 1/2*(tf.reduce_sum(tf.log(variance))  + tf.reduce_sum(inverse_variance *(diff*diff),axis=1))
-            #sy_logprob_n = tf.nn.
-            #sy_logprob_n = inverse_variance * tf.losses.mean_squared_error(sy_mean, sy_ac_na)
+
+            # first part is actully log of determiant however since our matrix is diag it is easily computed.
+            sy_logprob_n = -(tf.reduce_sum(tf.log(variance))  + tf.reduce_sum(inverse_variance *(diff*diff),axis=1))
+            # from lecture. Does not correspond to loglikelihood
+            #sy_logprob_n = -tf.reduce_sum(inverse_variance *(diff*diff),axis=1)
             
         return sy_logprob_n
 
@@ -346,14 +317,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
         #========================================================================================#
         #loss = None # YOUR CODE HERE
         self.loss = -tf.reduce_mean(tf.multiply(self.sy_logprob_n, self.sy_adv_n))
-        #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate).minimize(self.loss)
-        #self.update_op =  tf.train.AdamOptimizer(self.learning_rate,beta1=0.9,beta2=0.99).minimize(self.loss)
-        #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate,beta1=0.99,beta2=0.9999).minimize(self.loss)
-        #self.update_op =  tf.contrib.optimizer_v2.AdamOptimizer(self.learning_rate,beta1=0.8,beta2=0.99).minimize(self.loss)
-        #self.update_op =  tf.train.AdamOptimizer(self.learning_rate,beta1=0.9,beta2=0.99).minimize(self.loss)
         self.update_op =  tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
-        #self.update_op =  tf.train.RMSPropOptimizer(self.learning_rate,momentum=0.9).minimize(self.loss)
-        #self.update_op =  tf.train.GradientDescentOptimizer(self.learning_rate).minimize(self.loss)
         #========================================================================================#
         #                           ----------PROBLEM 6----------
         # Optional Baseline
@@ -384,33 +348,9 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             path = self.sample_trajectory(env, animate_this_episode,self.max_path_length)
             paths.append(path)
             timesteps_this_batch += pathlength(path)
-            #newpaths = self.sample_trajectories_parallel(env, n_parallel=10)
-            #for path in newpaths:
-            #    paths.append(path)
-            #    timesteps_this_batch += pathlength(path)
             if timesteps_this_batch > self.min_timesteps_per_batch:
                 break
         return paths, timesteps_this_batch
-
-
-    
-    # @ray.remote
-    # class Simulator(object):
-    #     def __init__(self,env_str,max_path_length):
-    #         self.env = gym.make(env_str)
-    #         #self.agent = agent
-    #         self.max_path_length = max_path_length
-
-    #     def sample(self,ray_agent_id):
-    #         self.env.reset()
-    #         agent = ray.get(ray_agent_id)
-    #         return agent.sample_trajectory(self.env,False,self.max_path_length)
-
-
-    # def sample_trajectories_parallel(self, env, n_parallel=1):
-    #     ray_agent_id = ray.put(self)
-    #     simulators = [self.Simulator.remote(env.spec.id, self.max_path_length/n_parallel)]*n_parallel
-    #     return [simulator.sample.remote(ray_agent_id) for simulator in simulators]
 
     def sample_trajectory(self, env, animate_this_episode,max_path_length):
         ob = env.reset()
@@ -518,7 +458,6 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
                     sum = advantage + self.gamma * sum
                     rewards_to_go.append(sum)
                 rewards_to_go.reverse()
-                #q_n.append(rewards_to_go)
                 q_n += rewards_to_go
         else:
             for advantages in re_n:
@@ -562,7 +501,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             b_n = self.sess.run(self.baseline_prediction, {
                 self.sy_ob_no: ob_no
             }) # YOUR CODE HERE
-            adv_n = q_n - b_n
+            adv_n = q_n - (b_n*np.std(q_n)+np.mean(q_n))
         else:
             adv_n = q_n.copy()
         return adv_n
@@ -596,8 +535,7 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             # On the next line, implement a trick which is known empirically to reduce variance
             # in policy gradient methods: normalize adv_n to have mean zero and std=1.
             #raise NotImplementedError
-            #adv_n = None # YOUR_CODE_HERE
-            adv_n = (adv_n - np.mean(adv_n))/np.std(adv_n)
+            adv_n = (adv_n - np.mean(adv_n))/np.std(adv_n) # YOUR_CODE_HERE
         return q_n, adv_n
 
     def update_parameters(self, ob_no, ac_na, q_n, adv_n):
@@ -674,11 +612,6 @@ n_parralel                    sy_logits_na: (batch_size, self.ac_dim)
             self.sy_ac_na: ac_na,
             self.sy_adv_n: adv_n
         })
-        #except Exception as e:
-        #    print("failed update. Failed with {}".format(e))
-        print("Loss before {}, loss after {}".format(loss_before,loss_after))
-        print("Std {}, ".format(std))
-
         #raise NotImplementedError
 
 
