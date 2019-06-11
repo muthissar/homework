@@ -68,39 +68,14 @@ class ModelBasedPolicy(object):
         ### PROBLEM 1
         ### YOUR CODE HERE
         #(a)
-        #state_mean = self._init_dataset.state_mean
-        #state_std = self._init_dataset.state_std + 1e-8
-        #state = (state - state_mean)/state_std
-
-        #action_mean = self._init_dataset.action_mean
-        #action_std = self._init_dataset.action_std + 1e-8
-        #action = (action - action_mean)/action_std
         state_norm  = utils.normalize(state,  self._init_dataset.state_mean,  self._init_dataset.state_std)
         action_norm = utils.normalize(action, self._init_dataset.action_mean, self._init_dataset.action_std)
         
-        # CHECKED SCOPE NOT USED
-        
-        
 
         #(b)
-        #self.state_action = np.concatenate((state,action),axis=-1)
-        # state_action = tf.concat([state,action],axis=1)
         state_action = tf.concat([state_norm, action_norm], axis=1)
         #(c)
         state_diff_normalized = utils.build_mlp(state_action, self._state_dim, scope='nn_dynamics', n_layers=self._nn_layers, reuse=reuse)
-        #delta_state = utils.build_mlp(state_action,
-        #    self._state_dim,
-        #    'nn_dynamics',
-        #    n_layers=self._nn_layers,
-        #    reuse=reuse)
-        #state_delta = self._sess.run(self._nn_dynamics, feed_dict={
-        #    self._state_action_ph: state_action
-        #})
-        #(d)
-        #delta_state_mean = self._init_dataset.delta_state_mean
-        #delta_state_std = self._init_dataset.delta_state_std
-        #delta_state = delta_state * delta_state_std + delta_state_mean
-        #next_state_pred = state + delta_state
         state_diff = utils.unnormalize(state_diff_normalized, self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
         next_state_pred = state_diff + state
         return next_state_pred
@@ -129,8 +104,6 @@ class ModelBasedPolicy(object):
         actual_diff = next_state_ph -  state_ph
         pred_diff = next_state_pred - state_ph
         #(b)
-        #delta_state_mean = self._init_dataset.delta_state_mean
-        #delta_state_std = self._init_dataset.delta_state_std +1e-8
         actual_diff_norm = utils.normalize(actual_diff,self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
         pred_diff_norm = utils.normalize(pred_diff,self._init_dataset.delta_state_mean, self._init_dataset.delta_state_std)
         #(c)
@@ -168,23 +141,15 @@ class ModelBasedPolicy(object):
         """
         ### PROBLEM 2
         ### YOUR CODE HERE
-        #raise NotImplementedError
-        #for _ in self._num_random_action_selection:
         tiled_state = tf.tile(tf.squeeze(state_ph),tf.constant([self._num_random_action_selection]))
-        #tiled_state = tf.tile(state_ph,self._num_random_action_selection)
         states = tf.reshape(tiled_state, [self._num_random_action_selection,self._state_dim])
         self.first_states = states
         cost = tf.constant(0.0,shape=[self._num_random_action_selection])
         actions = self.first_actions =  tf.random_uniform([self._num_random_action_selection,self._action_dim],self._action_space_low, self._action_space_high) \
-                #* (self._action_space_low - self._action_space_high) + self._action_space_high
-                #* (self._action_space_high - self._action_space_low) + self._action_space_low
-        #for _ in range(self._horizon):
         for _ in range(self._horizon):
             next_states = self._dynamics_func(states, actions, reuse=True)
             cost += self._cost_fn(states,actions,next_states)
             actions = tf.random_uniform([self._num_random_action_selection,self._action_dim],self._action_space_low, self._action_space_high) \
-                #* (self._action_space_low - self._action_space_high) + self._action_space_high
-                #* (self._action_space_low - self._action_space_high ) + self._action_space_high
             states = next_states
         self.cost = cost
         self.best_action_seq_index = tf.argmin(cost)
@@ -202,7 +167,6 @@ class ModelBasedPolicy(object):
         ### PROBLEM 1
         ### YOUR CODE HERE
         state_ph, action_ph, next_state_ph = self._setup_placeholders()
-        #self._state_action_ph = tf.concat([state_ph,action_ph],axis=-1)
         next_state_pred = self._dynamics_func(state_ph, action_ph, reuse = False)
         loss, optimizer = self._setup_training(state_ph,next_state_ph,next_state_pred)
         #raise NotImplementedError
